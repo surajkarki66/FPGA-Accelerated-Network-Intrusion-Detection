@@ -1,0 +1,87 @@
+# Build / sim artifacts
+*.vcd
+*.vvp
+*.out
+*.o
+*.log
+*.jou
+*.str
+*.pb
+xsim.dir/
+*.wdb
+*.wlf
+transcript
+work/
+modelsim.ini
+
+# Vivado / Quartus
+*.bit
+*.bin
+*.mcs
+*.ltx
+*.dcp
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+*.gen/
+*.xpr
+*.qpf
+*.qsf
+*.qws
+db/
+incremental_db/
+output_files/
+*.sof
+*.rbf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Large local datasets (keep small fixtures)
+datasets/raw/
+*.csv.gz
+NSL-KDD/
+CICIDS*/
+# UNSW-NB15 CSVs — download per dataset/README.md
+dataset/*.csv
+!dataset/.gitkeep
+!dataset/README.md
+
+# Generated weights (from make deploy)
+weights/generated/
+!weights/.gitkeep
+
+# Generated RTL golden batch
+sim/golden/*.mem
+sim/golden/*.vh
+sim/golden/meta.txt
+sim/golden/expected.txt
+!sim/golden/.gitkeep
+
+# Training artifacts / caches
+artifacts/
+python/checkpoints/
+
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Ruff + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff check
+        run: ruff check sw tests scripts/ci_smoke_export.py
+
+      - name: Ruff format
+        run: ruff format --check sw tests scripts/ci_smoke_export.py
+
+      - name: Pytest
+        run: pytest
+
+  rtl-lint:
+    name: Verilator lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Lint RTL
+        run: make lint
+
+  sim-smoke:
+    name: Icarus smoke (50 samples)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python + Icarus
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y iverilog
+
+      - name: Synthetic weights + golden
+        run: PYTHONPATH=sw python3 scripts/ci_smoke_export.py
+
+      - name: Simulate
+        run: ./scripts/sim.sh

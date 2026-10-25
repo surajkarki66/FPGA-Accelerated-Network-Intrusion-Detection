@@ -1,0 +1,15 @@
+## Example constraints — copy to board.xdc and adapt to your FPGA.
+## Shown for a generic 100 MHz single-ended clock + reset (Artix-7 style).
+
+## Clock
+# set_property -dict { PACKAGE_PIN E3 IOSTANDARD LVCMOS33 } [get_ports clk]
+# create_clock -add -name sys_clk -period 10.000 -waveform {0 5} [get_ports clk]
+
+## Reset (active-low)
+# set_property -dict { PACKAGE_PIN C12 IOSTANDARD LVCMOS33 } [get_ports rst_n]
+
+## Debug LEDs (optional)
+# set_property -dict { PACKAGE_PIN H17 IOSTANDARD LVCMOS33 } [get_ports dbg_busy]
+# set_property -dict { PACKAGE_PIN K15 IOSTANDARD LVCMOS33 } [get_ports dbg_done]
+
+## Timing false paths / bitstream options as needed for your board.

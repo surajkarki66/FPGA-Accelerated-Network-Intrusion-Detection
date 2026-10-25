@@ -1,0 +1,44 @@
+[project]
+name = "fpga-nids"
+version = "0.1.0"
+description = "FPGA-accelerated network intrusion detection using Deep Neural Network"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "See LICENSE" }
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["sw", "tests"]
+extend-exclude = ["artifacts", "weights", "dataset", ".venv"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # bugbear
+  "UP",  # pyupgrade
+  "SIM", # simplify
+]
+ignore = [
+  "E501",  # line length handled by formatter
+  "SIM108",  # ternary is often less readable for train/eval branches
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["model"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["sw"]
+addopts = "-q"
+filterwarnings = [
+  "ignore::DeprecationWarning",
+]
