@@ -1,16 +1,19 @@
-// Core FNN accelerator: memories + shared PE engine + N-layer FSM.
-`timescale 1ns / 1ps
+// Core Feed-forward Neural Network Accelerator
+
+`timescale 1ns / 1ps // This defines the simulation time units. 1ns: time unit, 1ps: time precision. e.g #10; wait 10ns
 `include "fnn_params.vh"
 
+// Module declaration and parameters
 module fnn_top #(
     parameter DATA_W    = `FNN_DATA_W,
     parameter NUM_PE    = `FNN_NUM_PE,
     parameter OUT_DIM   = `FNN_OUTPUT_DIM,
     parameter ACT_AW    = `FNN_ACT_ADDR_W,
     parameter W_AW      = `FNN_W_ADDR_W,
-    parameter W_MEM_FILE    = "weights/generated/weights.mem",
-    parameter BIAS_MEM_FILE = "weights/generated/biases.mem"
+    parameter W_MEM_FILE    = "/home/hsbi/Documents/Masters/FPGA-Accelerated-Network-Intrusion-Detection/weights/generated/weights.mem",
+    parameter BIAS_MEM_FILE = "/home/hsbi/Documents/Masters/FPGA-Accelerated-Network-Intrusion-Detection/weights/generated/biases.mem"
 ) (
+    // Top-level input and output ports
     input  wire                     clk,
     input  wire                     rst_n,
     input  wire                     start,
@@ -18,18 +21,25 @@ module fnn_top #(
     output wire                     done,
     output wire [31:0]              cycle_count,
 
-    input  wire                     feat_we,
-    input  wire [ACT_AW-1:0]        feat_addr,
-    input  wire signed [DATA_W-1:0] feat_wdata,
+    // Input feature interface
+    input  wire                     feat_we, // Feature write enable: When asserted, the controller can write an input feature into activation memory.
+    input  wire [ACT_AW-1:0]        feat_addr, // Specifies which activation memory location receives the input feature.
+    input  wire signed [DATA_W-1:0] feat_wdata, // The actual feature value being written.
 
-    output wire [7:0]               pred,
-    output wire signed [OUT_DIM*DATA_W-1:0] scores_flat
+    // Prediction output
+    output wire [7:0]               pred, // final classification result
+    output wire signed [OUT_DIM*DATA_W-1:0] scores_flat // This output contains the network's raw output score or scores.
 );
 
-    wire                 a_we, b_we;
-    wire [ACT_AW-1:0]    a_waddr, a_raddr, b_waddr, b_raddr;
-    wire signed [DATA_W-1:0] a_wdata, a_rdata, b_wdata, b_rdata;
+    // Internal activation memory signals
+    // These are internal wires connecting the controller to the activation memories.
+    wire                 a_we, b_we; // Write enable for memory a and memory b
+    wire [ACT_AW-1:0]    a_waddr, a_raddr, b_waddr, b_raddr; // write address and read address
+    wire signed [DATA_W-1:0] a_wdata, a_rdata, b_wdata, b_rdata; // data being written and data being read
 
+    // Activation memory instances: this create two act_mem module instances, u_act_a and u_act_b
+    // Two memory instance: Ping-pong memory buffering
+    // When calling the module, we have to do parameter connection (#()) and port connection (())
     act_mem #(.DATA_W(DATA_W), .DEPTH(`FNN_MAX_WIDTH), .ADDR_W(ACT_AW)) u_act_a (
         .clk(clk), .we(a_we), .waddr(a_waddr), .wdata(a_wdata),
         .raddr(a_raddr), .rdata(a_rdata)
@@ -39,10 +49,11 @@ module fnn_top #(
         .raddr(b_raddr), .rdata(b_rdata)
     );
 
+    // weights and bias memory signal
     wire [W_AW-1:0] w_addr, bias_addr;
     wire signed [DATA_W-1:0] w_rdata, bias_rdata;
 
-    // Depths come from fnn_params.vh (exact model size — no empty headroom).
+    // Weight and bias memory instances: u_wmem, u_bmem
     weight_mem #(.DATA_W(DATA_W), .DEPTH(`FNN_W_DEPTH), .ADDR_W(W_AW),
                  .MEM_FILE(W_MEM_FILE)) u_wmem (
         .clk(clk), .addr(w_addr), .dout(w_rdata)
