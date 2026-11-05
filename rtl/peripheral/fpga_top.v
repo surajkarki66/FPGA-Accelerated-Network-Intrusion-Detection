@@ -7,8 +7,8 @@ module fpga_top (
     input  wire        clk,
     input  wire        rst_n,
 
-    // AXI4-Lite (connect to PS or soft host)
-    input  wire [7:0]  AWADDR,
+    // AXI4-Lite (32-bit addr for Zynq PS; slave decodes [7:0])
+    input  wire [31:0] AWADDR,
     input  wire        AWVALID,
     output wire        AWREADY,
     input  wire [31:0] WDATA,
@@ -18,7 +18,7 @@ module fpga_top (
     output wire [1:0]  BRESP,
     output wire        BVALID,
     input  wire        BREADY,
-    input  wire [7:0]  ARADDR,
+    input  wire [31:0] ARADDR,
     input  wire        ARVALID,
     output wire        ARREADY,
     output wire [31:0] RDATA,

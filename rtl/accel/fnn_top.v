@@ -67,7 +67,8 @@ module fnn_top #(
     wire signed [DATA_W-1:0] eng_a;
     wire signed [NUM_PE*DATA_W-1:0] eng_w_flat, eng_bias_flat, eng_y_flat;
     wire [NUM_PE-1:0]    eng_lane_en, eng_valid_out;
-
+    
+    // Shared Mac Engine
     shared_mac_engine #(.DATA_W(DATA_W), .NUM_PE(NUM_PE)) u_engine (
         .clk(clk), .rst_n(rst_n),
         .clear(eng_clear), .valid_in(eng_valid), .a(eng_a), .w_flat(eng_w_flat),

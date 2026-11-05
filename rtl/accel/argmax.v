@@ -14,8 +14,8 @@ module argmax #(
     integer i;
     reg signed [DATA_W-1:0] s;
 
-    always @(*) begin
-        max_val = scores_flat[DATA_W-1:0];
+    always @(*) begin // This is a combinational block. It does not wait for a clock edge; its outputs are recalculated whenever its inputs change.
+        max_val = scores_flat[DATA_W-1:0]; // This extracts score i from the packed bus.
         index   = {IDX_W{1'b0}};
         for (i = 1; i < NUM; i = i + 1) begin
             s = scores_flat[i*DATA_W +: DATA_W];
