@@ -125,11 +125,146 @@ flowchart TD
 
 | File                 | Function                                                   |
 | -------------------- | ---------------------------------------------------------- |
-| `axi4lite_slave.v` | AXI4-Lite MMIO; feature write; start/status/pred/cycles    |
-| `fpga_top.v`       | Instantiates `fnn_top` + AXI slave; optional debug ports |
+| `axi4lite_slave.v`   | AXI4-Lite MMIO, feature write, start/status/pred/cycles    |
+| `fpga_top.v`         | Instantiates `fnn_top` + AXI slave and optional debug ports|
 
-Address ports are **32 bits**; register select uses bits `[7:0]`.
-Programming model: [host.md](host.md).
+
+#### 2.2.1 axi4lite_slave.v
+- AXI4-Lite is a lightweight memory-mapped communication protocol used to connect hardware peripherals and processors.
+- The AXI4-Lite slave acts as a bridge between software running on the ARM processor and hardware running inside the FPGA.
+- It allows the processor to control the neural network accelerator using memory-mapped registers.
+- Input features must be transferred from the ARM processor to the FPGA before inference can begin.
+- The ARM processor used Memory-Mapped I/O (MMIO) to transfer.
+- In MMIO, we assign specific addresses to hardware registers. The processor can access these registers using normal memory read and write operations.
+
+AXI4-Lite has five independent communication channels:
+
+| Channel | Signal prefix | Direction from master to slave | Purpose |
+|---|---|---|---|
+| Write Address | AW | Yes | Specifies the address to write |
+| Write Data | W | Yes | Carries the data to write |
+| Write Response | B | No | Reports the write transaction result |
+| Read Address | AR | Yes | Specifies the address to read |
+| Read Data | R | No | Returns the requested data |
+
+For example,
+| Register | Address offset | Access | Purpose |
+|---|---:|---|---|
+| CTRL | `0x00` | Write | Start inference |
+| STATUS | `0x04` | Read | Read busy/done |
+| PRED | `0x08` | Read | Read predicted class |
+| CYCLES | `0x0C` | Read | Read execution cycles |
+| ADDR | `0x10` | Write | Select feature/score index |
+| DATA | `0x14` | Read/Write | Write features or read scores |
+
+`Why AXI4 Slave ?`
+- The neural network accelerator does not understand C instructions or software commands.
+- It understands hardware signals such as: start, feat_we, feat_addr, feat_wdata
+- The ARM processor, on the other hand, communicates through AXI transactions.
+- Therefore, we need a component that translates between these two worlds.
+- The AXI slave performs three major jobs:
+    1. Receives input features from the processor.
+    2. Starts and monitors neural network inference.
+    3. Returns prediction results and performance information.
+
+#### Understanding the AXI write transaction
+Remember that AXI4-Lite has separate write-address and write-data channels.
+These are:
+- AW: Write Address.
+- W: Write Data.
+- B: Write Response.
+
+An important detail is that the write address and write data can arrive independently.
+
+For example, 
+| Clock cycle | AWVALID | WVALID | What happens |
+|---|---:|---:|---|
+| 1 | 1 | 0 | Address arrives |
+| 2 | 0 | 1 | Data arrives |
+| 3 | 0 | 0 | Slave commits the write |
+| 4 | 0 | 0 | Slave returns write response |
+
+The slave must remember the address while waiting for the data, or remember the data while waiting for the address.
+
+#### Understanding the AXI read transaction
+A read transaction uses two channels:
+- AR: Read Address.
+- R: Read Data.
+The sequence is simpler:
+ARM Processor                 AXI Slave
+     |                            |
+     |------ ARADDR ------------->|
+     |------ ARVALID ------------>|
+     |                            |
+     |<----- ARREADY --------------|
+     |                            |
+     |<----- RDATA ----------------|
+     |<----- RVALID ---------------|
+     |                            |
+     |------ RREADY -------------->|
+     |                            |
+
+- The processor requests an address, and the slave returns the corresponding register value.
+
+                 SOFTWARE
+             C / Python Application
+                      |
+                      v
+              Zynq ARM Processor
+                      |
+                      | AXI4-Lite
+                      v
+              +----------------+
+              | axi4lite_slave |
+              +----------------+
+                      |
+          +-----------+------------+
+          |           |            |
+          v           v            v
+       fnn_start   Feature       Read Results
+                   Write
+          |           |            ^
+          v           v            |
+              +----------------+
+              |    fnn_top     |
+              |                |
+              | Activation RAM |
+              | Layer Control  |
+              | Shared MAC     |
+              | ReLU / Argmax  |
+              +----------------+
+                      |
+                      v
+               Prediction
+               Output Scores
+               Cycle Count
+
+#### 2.2.2 fpga_top.v
+- It is the top-level integration module of the FPGA-based neural network accelerator.
+- In Verilog, a top module is the main entry point of your hardware design.
+- It connects the different modules and exposes the signals that communicate with external hardware.
+- Think of it as the main circuit board that connects all the components.
+
+                  FPGA TOP MODULE
+                   (fpga_top)
+                       |
+          +------------+------------+
+          |                         |
+          v                         v
+       fnn_top                 axi4lite_slave
+          |                         |
+          v                         |
+    Neural Network                  |
+     Accelerator                    |
+          |                         |
+          +-----------+-------------+
+                      |
+                 AXI4-Lite
+                      |
+                      v
+              Zynq Processing System
+                  (ARM CPU)
+
 
 ### 2.3 Generated parameters (`include/fnn_params.vh`)
 

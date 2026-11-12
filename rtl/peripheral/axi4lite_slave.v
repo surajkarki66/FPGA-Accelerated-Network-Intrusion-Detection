@@ -1,6 +1,6 @@
-// Minimal AXI4-Lite slave → FNN accelerator MMIO.
-// Compatible with Zynq UltraScale+ PS (32-bit addr) or a sim AXI BFM.
-// Register decode uses AWADDR/ARADDR[7:0]; upper bits ignored (window offset).
+// Minimal AXI4-Lite slave
+// Compatible with Zynq UltraScale+ PS (32-bit addr)
+// Register decode uses AWADDR/ARADDR[7:0], upper bits ignored (window offset).
 `timescale 1ns / 1ps
 `include "fnn_params.vh"
 
@@ -9,8 +9,9 @@ module axi4lite_slave #(
     parameter ACT_AW = `FNN_ACT_ADDR_W,
     parameter OUT_DIM = `FNN_OUTPUT_DIM
 ) (
-    input  wire         ACLK,
-    input  wire         ARESETN,
+    // All AXI transactions and internal register updates are synchronized to ACLK.
+    input  wire         ACLK, // clock for the AXI interface.
+    input  wire         ARESETN, // active-low reset.
 
     // AXI4-Lite
     input  wire [31:0]  AWADDR,

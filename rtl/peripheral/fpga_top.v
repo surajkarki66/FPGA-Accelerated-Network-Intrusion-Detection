@@ -1,5 +1,4 @@
 // Board-agnostic top: FNN + AXI slave.
-// For non-SoC boards, replace AXI with UART/SPI host in a later revision.
 `timescale 1ns / 1ps
 `include "fnn_params.vh"
 
