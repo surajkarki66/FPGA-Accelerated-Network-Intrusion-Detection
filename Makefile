@@ -1,6 +1,6 @@
-.PHONY: golden sim lint lint-py format test train train-deeper eval deploy hooks ci-smoke
+.PHONY: golden sim lint lint-py format test train train-deeper eval deploy hooks ci-smoke \
+	board-package board-bd board-bitstream board-boot board-pack board-run
 
-# PYTHONPATH=sw makes `import model...` resolve to sw/model/
 golden:
 	PYTHONPATH=sw python3 sw/generate_test_vectors.py
 
@@ -30,7 +30,7 @@ ci-smoke:
 	PYTHONPATH=sw python3 scripts/ci_smoke_export.py
 	./scripts/sim.sh
 
-# Float train → artifacts/nids_mlp.pt
+# Float train
 train:
 	PYTHONPATH=sw python3 sw/train.py --layers 10,6,1 --epochs 15
 
@@ -41,6 +41,25 @@ train-deeper:
 eval:
 	PYTHONPATH=sw python3 sw/eval.py
 
-# Quantize → INT8 eval → weights/generated + fnn_params.vh
+# Quantize → INT8 evaluation → weights/generated + fnn_params.vh
 deploy:
 	PYTHONPATH=sw python3 sw/deploy.py
+
+# --- ZCU104 board
+board-package:
+	./board/package_fpga_top.sh
+
+board-bd:
+	./board/create_bd.sh
+
+board-bitstream:
+	./board/build_bitstream.sh
+
+board-boot:
+	./board/build_boot.sh
+
+board-pack: golden
+	python3 board/pack_golden.py
+
+board-run: board-pack
+	./board/run_on_board.sh
