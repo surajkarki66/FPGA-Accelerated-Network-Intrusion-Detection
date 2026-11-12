@@ -60,6 +60,7 @@ Note: If both addresses point to the same location, the RTL code reads the old v
 - The read operation is synchronous and occurs at the rising edge of the clock.
 
 #### 2.1.4 shared_mac_engine.v
+
 - The shared_mac_engine module implements a parallel Multiply-Accumulate (MAC) engine for your FNN FPGA accelerator.
 - It instantiates multiple mac_unit modules operating in parallel. All MAC units receive the same activation input (a), but each lane receives its own weight and bias values. This allows the accelerator to calculate multiple output neurons simultaneously.
 - For example, if NUM_PE = 4, four MAC units can process four different output neurons in parallel using the same input activation and four different weights.
@@ -67,19 +68,58 @@ Note: If both addresses point to the same location, the RTL code reads the old v
 ![1793873965575](image/rtl/1793873965575.png)
 
 #### 2.1.5 mac_unit.v
+
 - The mac_unit is the module that performs the actual multiply-accumulate (MAC) operation for one processing element (PE).
 - It receives an activation and its corresponding weight, multiplies them, adds the result to a 32-bit accumulator, and optionally adds a bias.
 - When finalize is asserted, it converts the accumulated result back to the INT8 output range using a fixed-point right shift and saturation.
 - Here, each PE has its own mac_unit, so each PE maintains an independent accumulator.
 
 #### 2.1.6 relu.v
+
 - This relu module implements the ReLU (Rectified Linear Unit) activation function for a signed INT8 value.
 - It can also bypass ReLU when enable=0, which is useful for an output layer that should not use ReLU.
 
 #### 2.1.7 argmax.v
+
 - This argmax module finds the index of the largest score among the neural network's output neurons.
 - It is commonly used for classification, where each output neuron represents a class.
- 
+
+#### 2.1.8 layer_controller.v
+
+- The layer controller coordinates the entire neural-network inference process.
+- It acts as the brain of your FPGA accelerator: it decides which activation and weight to read, when to perform MAC operations, when to add biases, when to apply ReLU, and where to store the results.
+
+```mermaid
+flowchart TD
+    A["Input Features"] --> B["Activation Memory<br/>(A / B)"]
+    B --> C["Layer Controller"]
+
+    C --> D["Weight Memory"]
+    C --> E["Bias Memory"]
+
+    D --> F["Shared MAC Engine<br/>(NUM_PE lanes)"]
+    E --> F
+
+    F --> G["ReLU (if needed)"]
+    G --> H["Activation Memory<br/>(A / B)"]
+
+    H --> I["Next FC Layer"]
+    I --> J["Final Scores"]
+    J --> K["Argmax"]
+    K --> L["Predicted Class"]
+
+    classDef memory fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef compute fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef control fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef output fill:#f3e8ff,stroke:#9333ea,color:#581c87
+
+    class B,D,E,H memory
+    class F,G compute
+    class C control
+    class J,K,L output
+```
+- The controller uses a Finite State Machine (FSM) to coordinate the inference process.
+- Activation, weight, and bias memories use synchronous reads. Therefore, the controller separates each memory operation into three stages: REQ (drive addr) → WAIT (mem samples) → CAP(use dout)
 
 ### 2.2 Peripheral modules (`peripheral/`)
 
