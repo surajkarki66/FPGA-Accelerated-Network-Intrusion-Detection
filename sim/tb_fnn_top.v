@@ -53,7 +53,6 @@ module tb_fnn_top;
     real    acc;
 
     initial begin
-        // No VCD on full-set runs (file would be huge).
         $readmemh("sim/golden/features.mem", features);
         $readmemh("sim/golden/expected.mem", expected);
         $readmemh("sim/golden/labels.mem", labels);

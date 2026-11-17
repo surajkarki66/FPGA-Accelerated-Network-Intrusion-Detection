@@ -140,7 +140,7 @@ def main() -> None:
     )
     print(
         f"Wrote golden {n} UNSW_test samples "
-        f"(sw INT8 vs label={match_true / n:.4f}, layers={cfg.layer_sizes}) from {src}"
+        f"(Software INT8 vs label={match_true / n:.4f}, layers={cfg.layer_sizes}) from {src}"
     )
 
 

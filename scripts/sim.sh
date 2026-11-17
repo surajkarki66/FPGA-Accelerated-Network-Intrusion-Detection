@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Icarus Verilog smoke tests from repo root.
+# Run Icarus Verilog tests from repo root.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

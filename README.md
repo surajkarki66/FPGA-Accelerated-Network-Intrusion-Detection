@@ -1,11 +1,8 @@
 # FPGA-Accelerated Network Intrusion Detection
 
-Train a small MLP on **UNSW-NB15**, quantize it to **INT8 Q1.7**, and run the
-same network on an FPGA accelerator.
+This repository provides an end-to-end flow for **FPGA-accelerated network intrusion detection**. A compact multi-layer perceptron (MLP) is trained in floating point on the [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) corpus, then quantised to signed **INT8 Q1.7** fixed-point arithmetic so that the same numerical model can be executed in programmable logic. Recursive feature elimination reduces each flow record to a small feature vector; the accelerator evaluates the network with shared multiply–accumulate processing elements and returns a class decision. Host software programs the design over **AXI4-Lite**, targeting AMD Zynq UltraScale+ platforms such as the **ZCU104**. The default topology is **10 → 6 → 1** (binary: score ≥ 0 ⇒ attack). Deeper or multi-class schedules are supported by retraining and re-exporting parameters.
 
-Default topology: **10 → 6 → 1** (binary: score ≥ 0 → attack).
-
-```mermaid
+`````mermaid
 flowchart LR
   CSV[UNSW-NB15] --> Train[train / eval]
   Train --> Deploy[deploy INT8]
@@ -13,96 +10,54 @@ flowchart LR
   ROM --> FPGA[FPGA FNN + PEs]
   Feat[INT8 features] --> FPGA
   FPGA --> Pred[pred]
-```
+`````
 
+## Documentation
 
+Detailed explanations live under **[`docs/`](docs/README.md)**:
 
-## Repo layout
+| Document                                 | Topic                                              |
+| ---------------------------------------- | -------------------------------------------------- |
+| [Architecture](docs/architecture.md)      | System design, Q1.7 math, datapath                 |
+| [Software](docs/software.md)              | Train / eval / deploy / export                     |
+| [RTL](docs/rtl.md)                        | Verilog modules and reading order                  |
+| [Simulation](docs/simulation.md)          | Icarus benches and golden vectors                  |
+| [Host interface](docs/host.md)            | AXI4-Lite register map                             |
+| [Synthesis](docs/synthesis.md)            | Vendor tools and resource knobs                    |
+| [ZCU104 bring-up](docs/zcu104_bringup.md) | Automated + GUI board procedure                    |
+| [Board scripts](board/README.md)          | Bitstream → SD image → on-board accuracy/latency |
+| [Dataset](docs/dataset.md)                | UNSW-NB15 download and layout                      |
 
-```
-dataset/     UNSW-NB15 CSVs (download — see dataset/README.md)
-sw/          train → eval (float) → deploy (quantize + export)
-rtl/         FNN accelerator + AXI top
-sim/         Icarus testbenches + golden vectors
-weights/     exported .mem ROMs (after deploy)
-artifacts/   float checkpoint + RFE feature list
-docs/        architecture notes
-```
+## Quick start
 
-## Setup
-
-```bash
+`````bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt          # runtime
-pip install -r requirements-dev.txt      # ruff, pytest, pre-commit
-make hooks                               # install git hooks
-# Download UNSW-NB15 CSVs into dataset/ — see dataset/README.md
-```
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+make hooks
+# Place CSVs: see dataset/README.md
 
-## Flow
+make train && make eval && make deploy
+make golden && make sim
+`````
 
-```bash
-make train      # float train → artifacts/nids_mlp.pt
-make eval       # float test accuracy
-make deploy     # quantize, INT8 check, write ROMs + fnn_params.vh
-make golden     # full UNSW test set → sim/golden/
-make lint       # Verilator RTL
-make lint-py    # Ruff
-make test       # pytest (Q1.7 / export unit tests)
-make sim        # Icarus (needs iverilog)
-```
+### ZCU104 (Linux image + on-board bench)
 
-Deeper net (same 10 RFE inputs):
+`````bash
+cp board/config.env.example board/config.env   # edit paths / SSH
+make board-bd                                  # package IP + create Vivado BD
+make board-bitstream                           # Vivado → .bit
+make board-boot                                # BOOT.BIN
+./board/flash_sd.sh                            # WIC + BOOT → µSD
+# boot board, Ethernet, SSH
+make board-run                                 # accuracy + latency over SSH
+`````
 
-```bash
-make train-deeper && make deploy
-```
+## License and dataset
 
-Or any shape: `PYTHONPATH=sw python3 sw/train.py --layers 10,64,32,16,1`
+See [LICENSE](LICENSE). Dataset terms: [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset)
 
-## Design at a glance
-
-
-|          |                                                                                    |
-| -------- | ---------------------------------------------------------------------------------- |
-| Data     | UNSW-NB15 binary (no `attack_cat`)                                                 |
-| Features | RFE → 10                                                                           |
-| Math     | INT8 Q1.7, shared MAC PEs                                                          |
-| Host     | AXI4-Lite                                                                          |
-| Depth    | change `--layers`, then `make deploy` (exact ROM size; ≤8 FC without editing `.v`) |
-
-
-More detail (PE tiling, datapath): [docs/architecture.md](docs/architecture.md).
-
-## Dev tooling
-
-
-| Command                        | What                                           |
-| ------------------------------ | ---------------------------------------------- |
-| `make lint-py` / `make format` | Ruff check / auto-fix                          |
-| `make test`                    | pytest unit tests                              |
-| `make hooks`                   | install pre-commit                             |
-| `make ci-smoke`                | synthetic 50-sample Icarus smoke (no UNSW CSV) |
-
-
-CI (GitHub Actions): Ruff + pytest, Verilator lint, Icarus smoke. Dependabot keeps Actions/pip weekly.
-
-## Acknowledgments
-
-All RTL and Python in this repository were **written for this project**. We looked at public FPGA neural-net projects for **design ideas**:
-
-
-| Project                                                                                                        | Idea we borrowed (in plain words)                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [loonamanik/verilog_MNIST_accelerator](https://github.com/loonamanik/verilog_MNIST_accelerator)                | Keep the hardware as a **small fully connected network** run one layer at a time, so getting a first working demo is easier.                       |
-| [ZFTurbo/…Digit-Detector…](https://github.com/ZFTurbo/Verilog-Generator-of-Neural-Net-Digit-Detector-for-FPGA) | Train in software, then **export fixed-point weights** into files the FPGA ROMs can load (train → quantize → Verilog-friendly memories).           |
-| [mjao1/cnn-fpga](https://github.com/mjao1/cnn-fpga)                                                            | Use **signed Q1.7 (INT8)** arithmetic, and keep a clear split between **core accelerator RTL** and **board / host** glue (constraints, AXI, etc.). |
-
-
-**Dataset:** [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset)
-(Moustafa & Slay). Download steps: [dataset/README.md](dataset/README.md).
-Use and cite according to the dataset authors’ terms.
-
-## License
-
-See [LICENSE](LICENSE).
+Design ideas consulted from:
+[verilog_MNIST_accelerator](https://github.com/loonamanik/verilog_MNIST_accelerator),
+[ZFTurbo digit detector](https://github.com/ZFTurbo/Verilog-Generator-of-Neural-Net-Digit-Detector-for-FPGA),
+[cnn-fpga](https://github.com/mjao1/cnn-fpga).
