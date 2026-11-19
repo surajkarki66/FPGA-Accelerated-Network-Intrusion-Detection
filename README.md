@@ -14,11 +14,11 @@ flowchart LR
 
 ## Documentation
 
-Detailed explanations live under **[`docs/`](docs/README.md)**:
+For setup and detailed explanation:
 
 | Document                                 | Topic                                              |
 | ---------------------------------------- | -------------------------------------------------- |
-| [Architecture](docs/architecture.md)      | System design, Q1.7 math, datapath                 |
+| [Architecture](docs/architecture.md)      | System design, Quantization, Datapath              |
 | [Software](docs/software.md)              | Train / eval / deploy / export                     |
 | [RTL](docs/rtl.md)                        | Verilog modules and reading order                  |
 | [Simulation](docs/simulation.md)          | Icarus benches and golden vectors                  |
