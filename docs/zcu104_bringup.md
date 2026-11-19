@@ -1,4 +1,4 @@
-# ZCU104 Implementation and Bring-Up
+# ZCU104 Implementation
 
 This guide describes the implementation and deployment of the Feedforward Neural Network (FNN) accelerator on the **AMD Zynq UltraScale+ MPSoC ZCU104** development board. It covers the FPGA implementation and board bring-up process, starting after successful RTL simulation. The workflow includes Vivado IP packaging, Block Design generation, bitstream implementation, SD-card preparation, Linux boot, and on-board hardware verification.
 
