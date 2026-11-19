@@ -1,249 +1,540 @@
-# ZCU104 Implementation and Bring-Up Procedure
+# ZCU104 Implementation and Bring-Up
 
-End-to-end guide for implementing the INT8 FNN accelerator on the **AMD Zynq UltraScale+ MPSoC ZCU104** and verifying it against the software golden reference under Linux. Validated result:**`PASS (82332/82332)`** (~484 cycles ≈ 4.84 µs at 100 MHz).
+This guide describes the implementation and deployment of the Feedforward Neural Network (FNN) accelerator on the **AMD Zynq UltraScale+ MPSoC ZCU104** development board. It covers the FPGA implementation and board bring-up process, starting after successful RTL simulation. The workflow includes Vivado IP packaging, Block Design generation, bitstream implementation, SD-card preparation, Linux boot, and on-board hardware verification.
 
-**Automated path (preferred):** `make board-bd` → `make board-bitstream` → `make board-boot` → `./board/flash_sd.sh` → `make board-run`.
+The accelerator communicates with the processing system (PS) through an AXI4-Lite interface. Linux accesses the accelerator through memory-mapped I/O (MMIO) using `/dev/mem`. The implementation has been validated using Vivado 2024.2 and a PetaLinux 2024.2 SD-card image.
 
-| Item                | Value                                                         |
-| ------------------- | ------------------------------------------------------------- |
-| Device / board part | `xczu7ev-ffvc1156-2-e` / `xilinx.com:zcu104:part0:1.1`    |
-| Tooling (validated) | Vivado **2024.2** + PetaLinux SD image **2024.2** |
-| PL clock            | 100 MHz (`pl_clk0`)                                         |
-| Host interconnect   | AXI4-Lite MMIO                                                |
-| FNN AXI base        | **`0x400000000`** (40-bit HPM1 aperture)              |
-| On-board bench      | Linux + `/dev/mem` + `board/fnn_bench.py`                 |
+**Validated hardware result: `PASS (82332/82332)`, with an average execution time of approximately 484 cycles (4.84 µs at 100 MHz).**
 
-`````mermaid
-flowchart LR
-  SIM[make sim PASS] --> PKG[package fpga_top IP]
-  PKG --> BD[Block Design + wrapper]
-  BD --> BIT[bitstream]
-  BIT --> BOOT[BOOT.BIN + SD flash]
-  BOOT --> SSH[Ethernet SSH]
-  SSH --> BENCH[fnn_bench.py]
-  BENCH --> PASS[PASS accuracy + latency]
-`````
+## 1. Hardware and Software Configuration
 
-There are **two ways** to reach a bitstream:
+| Item | Configuration |
+|---|---|
+| Development board | AMD ZCU104 |
+| FPGA device | `xczu7ev-ffvc1156-2-e` |
+| Board part | `xilinx.com:zcu104:part0:1.1` |
+| Vivado version | 2024.2 |
+| PetaLinux image | 2024.2 |
+| PL clock | 100 MHz (`pl_clk0`) |
+| Host interface | AXI4-Lite MMIO |
+| Accelerator base address | `0x400000000` |
+| Address range | 64 KiB |
+| On-board operating system | Linux |
+| Hardware verification | `/dev/mem` and Python |
 
-1. **Scripted (recommended for reproducibility):** `make board-bd` then`make board-bitstream`.
-2. **GUI (what you can do once by hand):** package IP, assemble the BD in Vivado, then use the same bitstream / SD scripts.
+## 2. Implementation Workflow
 
-Both end at the same topology and the same `FNN_BASE_ADDR`.
+The board implementation follows these steps:
 
----
+1. Package the existing accelerator RTL and generated memory files as Vivado IP.
+2. Create the Vivado project and Block Design.
+3. Synthesize and implement the design.
+4. Generate the FPGA bitstream.
+5. Generate `BOOT.BIN` containing the FPGA bitstream.
+6. Prepare the PetaLinux SD card.
+7. Boot Linux on the ZCU104.
+8. Run the hardware accuracy and latency benchmark.
 
-## 1. Repository prerequisites
+## 3. Board and Tool Setup
 
-On the build PC, from the repo root:
+### 3.1 Configure Vivado
 
-`````bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-make train && make deploy          # weights/generated/*.mem + fnn_params.vh
-make golden && make sim            # must PASS before trusting a bitstream
-`````
+Load the Vivado 2024.2 environment:
 
-The bitstream embeds the same `weights/generated/{weights,biases}.mem` images that `make sim` used. A failing simulation predicts a failing on-board comparison.
+```bash
+source /tools/Xilinx/Vivado/2024.2/settings64.sh
+```
 
-Confirm AXI port widths on `fpga_top` / `axi4lite_slave`: **`AWADDR` / `ARADDR`are 32 bits**, with register decode on bits `[7:0]` only.
+This also provides access to the required Xilinx boot utilities, including `bootgen`.
 
----
+The development PC requires:
 
-## 2. One-time board / tool setup
+- Vivado 2024.2
+- Xilinx `bootgen`
+- `sshpass`
+- `sudo` access for SD-card preparation
+- Python dependencies required by the board scripts
 
-### 2.1 Tools
+### 3.2 Configure the Board Environment
 
-`````bash
-source /tools/Xilinx/Vivado/2024.2/settings64.sh   # also provides bootgen
-`````
+Create the configuration file:
 
-### 2.2 Board config
-
-`````bash
+```bash
 cp board/config.env.example board/config.env
-`````
+```
 
-Important variables:
+Edit `board/config.env` and configure the following variables:
 
-| Variable                         | Role                                                     |
-| -------------------------------- | -------------------------------------------------------- |
-| `VIVADO_PROJ` / `VIVADO_XPR` | Vivado project directory / `.xpr`                      |
-| `IP_REPO`                      | Packaged `fpga_top` IP (default `board/out/ip_repo`) |
-| `BITSTREAM`                    | Output `.bit` path                                     |
-| `FNN_BASE_ADDR`                | Must match Address Editor (**`0x400000000`**)    |
-| `PL_CLK_MHZ`                   | Used by `fnn_bench.py` to convert cycles → µs (100)  |
-| `FW_DIR`                       | Prebuilt FSBL / PMUFW / ATF / U-Boot for `BOOT.BIN`    |
-| `WIC_IMG`                      | Decompressed PetaLinux ZCU104 `.wic`                   |
-| `SD_DEV`                       | SD block device on the build PC (e.g. `/dev/mmcblk0`)  |
-| `BOARD_HOST`                   | Board IP after Ethernet comes up                         |
+| Variable | Description |
+|---|---|
+| `VIVADO_PROJ` | Vivado project directory |
+| `VIVADO_XPR` | Vivado project file |
+| `IP_REPO` | Location of the packaged accelerator IP |
+| `BITSTREAM` | Output FPGA bitstream |
+| `FNN_BASE_ADDR` | Accelerator AXI base address |
+| `PL_CLK_MHZ` | PL clock frequency |
+| `FW_DIR` | Directory containing the prebuilt ZCU104 firmware |
+| `WIC_IMG` | Decompressed PetaLinux SD-card image |
+| `SD_DEV` | SD-card block device on the development PC |
+| `BOARD_HOST` | IP address of the ZCU104 board |
 
-### 2.3 Prebuilt firmware (for `BOOT.BIN`)
+The validated accelerator configuration uses:
 
-`````bash
+```bash
+FNN_BASE_ADDR=0x400000000
+PL_CLK_MHZ=100
+```
+
+The base address must match the Vivado Address Editor configuration.
+
+### 3.3 Obtain the Prebuilt Firmware
+
+Clone the Xilinx prebuilt firmware repository:
+
+```bash
 git clone --depth 1 -b xilinx_v2024.2 \
   https://github.com/Xilinx/soc-prebuilt-firmware.git \
   /path/to/zcu104_linux/soc-prebuilt-firmware
-# set FW_DIR=.../soc-prebuilt-firmware/zcu104-zynqmp
-`````
+```
 
-### 2.4 PetaLinux SD image
+Set `FW_DIR` to:
 
-1. Download the **2024.2** ZCU104 SD image (`.wic.xz`) from AMD's PetaLinux release area (Yocto Native BSP / ZCU104).
-2. Decompress to a `.wic` and set `WIC_IMG` in `config.env`.
+```text
+/path/to/zcu104_linux/soc-prebuilt-firmware/zcu104-zynqmp
+```
 
-This flow boots **Linux from µSD** and does **not** require JTAG for the accuracy bench.
+### 3.4 Download the PetaLinux SD Image
 
----
+Download the PetaLinux 2024.2 ZCU104 SD-card image from the AMD release repository:
 
-## 3. Package `fpga_top` as AXI4-Lite IP
+https://origin.petalinux.xilinx.com/sswreleases/rel-v2024.2/Yocto_Native_BSP/ZCU104/sd_image/
 
-The Block Design instantiates a packaged IP (`user.org:user:fpga_top:1.0`), not loose RTL files.
+Download the `.wic.xz` image and extract it:
 
-### 3.1 Scripted
+```bash
+xz -dk image.wic.xz
+```
 
-`````bash
+Set `WIC_IMG` in `board/config.env` to the extracted `.wic` file.
+
+This implementation boots Linux directly from the SD card and does not require JTAG for normal hardware verification.
+
+## 4. Package the Accelerator as Vivado IP
+
+The accelerator is integrated into the Vivado Block Design as a packaged IP rather than as individual RTL files.
+
+Run:
+
+```bash
 make board-package
-`````
+```
 
-What the script does:
+The packaging script performs the following operations:
 
-1. Copies `rtl/accel/*`, `rtl/peripheral/*`, `rtl/include/fnn_params.vh`, and`weights/generated/*.mem` into the IP `src/` tree.
-2. Points `fnn_top` `W_MEM_FILE` / `BIAS_MEM_FILE` at the packaged `.mem` paths.
-3. Declares slave bus `interface_aximm` (AXI4-Lite), clock `clk`, active-low
-   `rst_n`, and a **64 KiB** memory map (`reg0`) for the Address Editor.
+1. Copies accelerator RTL files from `rtl/accel/` and `rtl/peripheral/`.
+2. Includes the parameter definitions from `rtl/include/fnn_params.vh`.
+3. Copies the generated weight and bias memory files.
+4. Configures the memory file paths used by `fnn_top`.
+5. Defines the AXI4-Lite slave interface.
+6. Configures the clock and reset interfaces.
+7. Creates a 64 KiB memory map for the accelerator registers.
 
----
+The packaged IP is identified as:
 
-## 4. Create the Vivado project and Block Design
+```text
+user.org:user:fpga_top:1.0
+```
 
-### 4.1 Scripted
+The main interfaces are:
 
-`````bash
+| Interface | Description |
+|---|---|
+| `interface_aximm` | AXI4-Lite slave interface |
+| `clk` | Accelerator clock |
+| `rst_n` | Active-low reset |
+| `reg0` | 64 KiB addressable memory map |
+
+The packaged IP is stored in the directory specified by `IP_REPO`. The default location is:
+
+```text
+board/out/ip_repo
+```
+
+## 5. Create the Vivado Project and Block Design
+
+The Vivado project and Block Design can be generated automatically without using the graphical interface.
+
+Run:
+
+```bash
 make board-bd
-`````
+```
 
-`board/create_bd.tcl` builds exactly this topology:
+This command packages the accelerator IP and creates the Vivado project and Block Design using:
 
-`````text
-zynq_ultra_ps_e_0
-  M_AXI_HPM0_FPD ──┐
-  M_AXI_HPM1_FPD ──┼──► axi_smc (SmartConnect) ──► fpga_top_0 / interface_aximm
-  pl_clk0 (100 MHz) ──► fpga_top.clk, smc, maxihpm*_aclk, proc_sys_reset
-  pl_resetn0 ──► rst_ps8_0_100M ──► peripheral_aresetn → fpga_top.rst_n, smc.aresetn
+```text
+board/create_bd.tcl
+```
 
-Address Editor (PS Data):
-  SEG_fpga_top_0_reg0  offset = 0x400000000   range = 64K
-`````
+### 5.1 Block Design Architecture
 
-**Why both HPM0 and HPM1?**
-`0xA0000000` sits on the HPM0 aperture. The working Linux map uses **`0x400000000`**, which is a **40-bit HPM1** aperture. Enabling only HPM0 and probing `0xA0000000` from Linux caused hangs; HPM0+HPM1 with base `0x400000000` is the combination that passed.
+The Block Design contains the following components:
 
-Top of the project after the script: **`fnn_bd_wrapper`**.
+- **Zynq UltraScale+ Processing System:** Runs Linux and provides access to the programmable logic.
+- **AXI SmartConnect:** Connects the processing system to the accelerator.
+- **FNN Accelerator:** Executes neural network inference in programmable logic.
+- **Processor System Reset:** Generates the required reset signals.
 
-### 4.2 Timing / resources
+The main connections are:
 
-The default net (`10 → 6 → 1`, four MAC lanes) is light on the ZU7EV. If a deeper net fails timing: lower `pl_clk0`, or reduce `FNN_NUM_PE` and re-run
-`make deploy`. See [synthesis.md](synthesis.md).
+| Signal or Interface | Connection |
+|---|---|
+| `M_AXI_HPM0_FPD` | AXI SmartConnect |
+| `M_AXI_HPM1_FPD` | AXI SmartConnect |
+| `pl_clk0` | Accelerator and AXI clock |
+| `pl_resetn0` | Processor System Reset |
+| `peripheral_aresetn` | Accelerator and SmartConnect reset |
 
----
+### 5.2 AXI Address Configuration
 
-## 5. Generate the bitstream
+The accelerator is mapped to:
 
-### 5.1 Scripted
+```text
+Base address: 0x400000000
+Address range: 64 KiB
+```
 
-After **any** RTL change to the packaged IP (especially `axi4lite_slave`), always rebuild this way. Vivado otherwise reuses an Out-of-Context DCP and your edit never reaches the bitstream.
+This address belongs to the 40-bit HPM1 address aperture.
 
-`````bash
+Both HPM0 and HPM1 are enabled in the validated design. During bring-up, accessing the accelerator through the HPM0 address `0xA0000000` caused Linux to hang.
+
+The configuration using both interfaces and the HPM1 address `0x400000000` passed hardware verification.
+
+The generated top-level Block Design wrapper is:
+
+```text
+fnn_bd_wrapper
+```
+
+### 5.3 Additional Block Design Options
+
+The following commands are available:
+
+| Command | Description |
+|---|---|
+| `make board-package` | Package the accelerator RTL as Vivado IP. |
+| `make board-bd` | Package the IP and generate the Vivado Block Design. |
+| `SKIP_PACKAGE=1 make board-bd` | Recreate the Block Design using the existing packaged IP. |
+
+The equivalent manual GUI procedure uses the same topology and address configuration.
+
+### 5.4 Clock and Timing Considerations
+
+The implemented neural network configuration is:
+
+```text
+Input layer:   10 neurons
+Hidden layer:   6 neurons
+Output layer:   1 neuron
+MAC lanes:      4
+```
+
+This configuration is relatively small for the ZU7EV device.
+
+If a larger network fails timing closure, consider:
+
+- Reducing the PL clock frequency.
+- Decreasing `FNN_NUM_PE`.
+- Regenerating the hardware parameters and memory files before repackaging the IP.
+
+Refer to `synthesis.md` for additional synthesis and timing information.
+
+## 6. Generate the FPGA Bitstream
+
+After generating the Block Design, run:
+
+```bash
 make board-bitstream
-`````
+```
 
-## 6. Build `BOOT.BIN` and flash the SD card
+This command performs synthesis, implementation, timing analysis, and FPGA bitstream generation.
 
-Linux must load **your** PL bitstream at boot. The scripts take a stock PetaLinux WIC and replace / overlay boot firmware with one that includes the FNN `.bit`.
+The implementation script is:
 
-### 6.1 Assemble `BOOT.BIN`
+```text
+board/build_bitstream.sh
+```
 
-`````bash
+It clears the Vivado IP cache before implementation to ensure that the latest packaged RTL is used.
+
+**Important:** Whenever the accelerator RTL changes, rebuild the packaged IP and regenerate the bitstream. This is particularly important when modifying the AXI interface or register logic.
+
+The recommended sequence after an RTL modification is:
+
+```bash
+make board-package
+make board-bd
+make board-bitstream
+```
+
+This prevents Vivado from reusing outdated IP implementation results.
+
+## 7. Generate BOOT.BIN
+
+The ZCU104 must load the generated FPGA bitstream during system startup.
+
+The bitstream is included in the `BOOT.BIN` image so that the programmable logic is configured during boot.
+
+Run:
+
+```bash
 make board-boot
-`````
+```
 
-Requires `FW_DIR` (Section 2.3) and a successful `$BITSTREAM`.
+The implementation script is:
 
-### 6.2 Flash µSD on the build PC
+```text
+board/build_boot.sh
+```
 
-1. Insert the SD card, note the block device (`lsblk`) → set `SD_DEV`.
-2. Unmount any automounted partitions.
-3. Run (writes the WIC, then overlays `BOOT.BIN` and enables root SSH):
+It uses `bootgen` to generate:
 
-`````bash
-./board/flash_sd.sh          # needs sudo
-`````
+```text
+board/out/BOOT.BIN
+```
 
-What it does, in order:
+The firmware directory (`FW_DIR`) and a successfully generated FPGA bitstream must be available.
 
-1. `dd` / write `WIC_IMG` onto `SD_DEV`.
-2. Mount the boot partition, install `board/out/BOOT.BIN`.
-3. Patch rootfs via `enable_ssh.sh`: root login over SSH, password `fnn`,
-   optional static IP on `end0` (override with `FNN_ETH_IP`).
+The generated `BOOT.BIN` contains the following boot components:
 
-### 6.3 Board switches and first boot
+1. **FSBL** – First Stage Boot Loader.
+2. **PMUFW** – Platform Management Unit Firmware.
+3. **FNN bitstream** – FPGA configuration for the accelerator.
+4. **ATF** – Arm Trusted Firmware.
+5. **DTB** – Device Tree Blob describing the hardware to Linux.
+6. **U-Boot** – Second-stage bootloader.
 
-1. Insert the SD into the ZCU104.
-2. Boot mode **SW6 = ON OFF OFF OFF** (SD boot; confirm against your board's silkscreen / UG if unsure).
-3. Connect **Ethernet** (RJ45 to your LAN) and **UART** (optional debug).
-4. Power on.
+## 8. Prepare and Flash the SD Card
 
-Default after `flash_sd.sh`:
+### 8.1 Identify the SD Card
 
-| Item              | Value                            |
-| ----------------- | -------------------------------- |
-| User / password   | `root` / `fnn`               |
-| Static IP attempt | `192.168.178.10` on `end0`   |
-| DHCP hostname     | often `zynqmp-zcu104-sdt-full` |
+Insert the SD card into the development PC and identify its device:
 
-If DHCP wins, find the board on the LAN and set `BOARD_HOST` in `config.env` (this bring-up used e.g. `192.168.178.183`).
+```bash
+lsblk
+```
 
-`````bash
-ssh root@$BOARD_HOST     # password: fnn
-`````
+Set the correct device in `board/config.env`.
 
----
+For example:
 
-## 7. On-board accuracy and latency bench
+```bash
+SD_DEV=/dev/mmcblk0
+```
 
-From the **build PC** (repo root, `config.env` loaded by the script):
+Make sure that all automatically mounted SD-card partitions are unmounted.
 
-`````bash
+**Warning:** Flashing overwrites the selected block device. Verify `SD_DEV` carefully before proceeding.
+
+### 8.2 Flash the SD Card
+
+Run:
+
+```bash
+./board/flash_sd.sh
+```
+
+The script requires `sudo` privileges.
+
+It performs the following operations:
+
+1. Writes the PetaLinux `.wic` image to the SD card.
+2. Mounts the boot partition.
+3. Copies the generated `BOOT.BIN`.
+4. Configures root SSH access.
+5. Optionally configures a static Ethernet IP address.
+
+The root filesystem configuration is handled by:
+
+```text
+board/enable_ssh.sh
+```
+
+### 8.3 Configure and Boot the ZCU104
+
+Follow these steps:
+
+1. Insert the prepared SD card into the ZCU104.
+2. Configure the boot-mode switches for SD-card boot.
+3. Connect the Ethernet cable.
+4. Optionally connect UART for debugging.
+5. Power on the board.
+
+The validated switch configuration is:
+
+```text
+SW6 = ON OFF OFF OFF
+```
+
+Confirm the switch orientation against the board markings and ZCU104 documentation.
+
+### 8.4 Connect to the Board
+
+The SD-card preparation script configures the following default credentials:
+
+| Parameter | Default value |
+|---|---|
+| Username | `root` |
+| Password | `fnn` |
+| Static IP attempt | `192.168.178.10` |
+| Network interface | `end0` |
+
+The IP address and password can be changed using `FNN_ETH_IP` and `BOARD_PASS`, respectively.
+
+If DHCP assigns a different address, identify the board on the local network.
+
+The default DHCP hostname is often:
+
+```text
+zynqmp-zcu104-sdt-full
+```
+
+Update `BOARD_HOST` in `board/config.env` with the board's current IP address.
+
+Connect using:
+
+```bash
+ssh root@$BOARD_HOST
+```
+
+For example:
+
+```bash
+ssh root@192.168.178.10
+```
+
+Once connected, Linux is running on the ZCU104 and the accelerator is available in programmable logic.
+
+## 9. On-Board Hardware Verification
+
+After successfully booting Linux, run the hardware verification from the development PC:
+
+```bash
 make board-run
-`````
+```
 
-`fnn_bench.py` (runs **on the board**):
+The script transfers the required benchmark files to the board and executes the verification application over SSH.
 
-1. `mmap` `/dev/mem` at `FNN_BASE_ADDR`.
-2. For each golden vector: write 10× INT8 features via `ADDR`/`DATA`, pulse`CTRL`, poll `STATUS`, read `PRED` and `CYCLES`.
-3. Compare `PRED` to `expected.bin` (software INT8 golden, **not** UNSW labels).
-4. Print accuracy, mean/min/max latency (cycles and µs at `PL_CLK_MHZ`), and shost-loop throughput.
+The main benchmark application is:
 
-Expected success line:
+```text
+board/fnn_bench.py
+```
 
-`````text
+It communicates directly with the accelerator through `/dev/mem`.
+
+### 9.1 Prepare the Golden Reference
+
+The script:
+
+```text
+board/pack_golden.py
+```
+
+converts the existing simulation golden memory files:
+
+```text
+sim/golden/*.mem
+```
+
+into binary files:
+
+```text
+features.bin
+expected.bin
+```
+
+These files contain the input feature vectors and their corresponding software-generated INT8 reference predictions.
+
+### 9.2 Hardware Communication
+
+For each test vector, `fnn_bench.py` performs the following operations:
+
+1. Maps the accelerator's physical address into the Linux process address space using `/dev/mem`.
+2. Writes ten INT8 input features through the AXI4-Lite registers.
+3. Starts the accelerator by writing to the control register.
+4. Polls the status register until inference is complete.
+5. Reads the predicted output and execution cycle count.
+6. Compares the hardware prediction against the software golden reference.
+
+The reference predictions are stored in:
+
+```text
+expected.bin
+```
+
+These are software INT8 reference outputs, not the original UNSW-NB15 dataset labels.
+
+### 9.3 Expected Verification Result
+
+A successful hardware verification produces:
+
+```text
 PASS (82332/82332)
-`````
+```
 
-with average cycles near **484** → **~4.84 µs** at 100 MHz.
+This means that all 82,332 hardware predictions match the corresponding software golden reference predictions.
 
-Optional: reload PL without reflashing the SD:
+The benchmark also reports:
 
-`````bash
+- Prediction accuracy.
+- Average execution cycles.
+- Minimum execution cycles.
+- Maximum execution cycles.
+- Average execution latency in microseconds.
+- Host-side throughput.
+
+### 9.4 Latency Measurement
+
+The accelerator operates at 100 MHz.
+
+The execution time is calculated using:
+
+$$
+T = \frac{N_{\mathrm{cycles}}}{f_{\mathrm{clock}}}
+$$
+
+For an average execution count of approximately 484 cycles:
+
+$$
+T = \frac{484}{100 \times 10^{6}\,\mathrm{Hz}} \approx 4.84\,\mu\mathrm{s}
+$$
+
+Therefore, the average accelerator execution latency is approximately **4.84 µs**.
+
+The reported hardware latency is based on the accelerator cycle counter. Host-side throughput also includes AXI communication and software overhead.
+
+### 9.5 Optional: Reload the FPGA Bitstream
+
+The FPGA bitstream can be updated without reflashing the SD card.
+
+Run:
+
+```bash
 RELOAD_BIT=1 board/run_on_board.sh
-`````
+```
 
-MMIO register map: [host.md](host.md).
+This transfers the updated bitstream and reloads the programmable logic using Linux `fpga_manager`.
 
----
+This is useful when testing updated FPGA implementations.
 
-## 8. Future work
+## 10. Future Improvements
 
-1. Live traffic: PS (or PL) must still emit the same ten RFE-selected Q1.7 features before invoking this IP.
-2. Optional Linux driver (UIO / character device) instead of `/dev/mem`.
+The current implementation demonstrates hardware inference and bit-accurate verification on the ZCU104.
+
+The following improvements can extend the system:
+
+1. **Live network traffic:** Integrate the feature extraction and RFE preprocessing pipeline so that the processing system can generate the ten Q1.7 input features directly from incoming network traffic.
+2. **Linux driver:** Replace direct `/dev/mem` access with a dedicated Linux driver using UIO or a character device.
+3. **Performance optimization:** Evaluate different numbers of MAC processing elements and clock frequencies to improve throughput.
+4. **System integration:** Connect the accelerator to a complete network intrusion detection pipeline for real-time inference.
