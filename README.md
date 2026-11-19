@@ -18,40 +18,14 @@ For setup and detailed explanation:
 
 | Document                                 | Topic                                              |
 | ---------------------------------------- | -------------------------------------------------- |
-| [Architecture](docs/architecture.md)      | System design, Quantization, Datapath              |
+| [Architecture](docs/architecture.md)      | System design, quantization, datapath              |
 | [Software](docs/software.md)              | Train / eval / deploy / export                     |
-| [RTL](docs/rtl.md)                        | Verilog modules and reading order                  |
+| [RTL](docs/rtl.md)                        | Verilog modules                                    |
 | [Simulation](docs/simulation.md)          | Icarus benches and golden vectors                  |
 | [Host interface](docs/host.md)            | AXI4-Lite register map                             |
 | [Synthesis](docs/synthesis.md)            | Vendor tools and resource knobs                    |
-| [ZCU104 bring-up](docs/zcu104_bringup.md) | Automated + GUI board procedure                    |
-| [Board scripts](board/README.md)          | Bitstream → SD image → on-board accuracy/latency |
-| [Dataset](docs/dataset.md)                | UNSW-NB15 download and layout                      |
+| [ZCU104 bring-up](docs/zcu104_bringup.md) | Automation scripts                                 |
 
-## Quick start
-
-`````bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
-make hooks
-# Place CSVs: see dataset/README.md
-
-make train && make eval && make deploy
-make golden && make sim
-`````
-
-### ZCU104 (Linux image + on-board bench)
-
-`````bash
-cp board/config.env.example board/config.env   # edit paths / SSH
-make board-bd                                  # package IP + create Vivado BD
-make board-bitstream                           # Vivado → .bit
-make board-boot                                # BOOT.BIN
-./board/flash_sd.sh                            # WIC + BOOT → µSD
-# boot board, Ethernet, SSH
-make board-run                                 # accuracy + latency over SSH
-`````
 
 ## License and dataset
 
