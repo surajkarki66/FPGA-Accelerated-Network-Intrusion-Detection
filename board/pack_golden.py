@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Pack sim/golden/*.mem into compact binaries for on-board benchmarking."""
+
 from __future__ import annotations
 
 import argparse
@@ -30,12 +31,8 @@ def main() -> int:
     if not feat_path.is_file() or not exp_path.is_file():
         raise SystemExit(f"missing golden mems — run `make golden` first ({feat_path})")
 
-    feat = np.array(
-        [int(x, 16) for x in feat_path.read_text().split()], dtype=np.uint8
-    )
-    exp = np.array(
-        [int(x, 16) for x in exp_path.read_text().split()], dtype=np.uint8
-    )
+    feat = np.array([int(x, 16) for x in feat_path.read_text().split()], dtype=np.uint8)
+    exp = np.array([int(x, 16) for x in exp_path.read_text().split()], dtype=np.uint8)
     if len(feat) != len(exp) * 10:
         raise SystemExit(
             f"size mismatch: feat={len(feat)} exp={len(exp)} (want 10 features/sample)"

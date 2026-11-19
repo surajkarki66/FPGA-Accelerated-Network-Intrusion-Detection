@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """On-board FNN accuracy + latency benchmarking using /dev/mem."""
+
 from __future__ import annotations
 
 import argparse
@@ -65,9 +66,7 @@ def main() -> int:
     page_off = base_addr & ~(PAGE - 1)
     offset = base_addr - page_off
     fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
-    mm = mmap.mmap(
-        fd, PAGE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=page_off
-    )
+    mm = mmap.mmap(fd, PAGE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=page_off)
     os.close(fd)
 
     def wr(reg: int, val: int) -> None:
@@ -92,8 +91,7 @@ def main() -> int:
         return rd(REG_PRED) & 0xFF, rd(REG_CYCLES)
 
     print(
-        f"FNN bench  base=0x{base_addr:x}  clk={args.clk_mhz:g} MHz  "
-        f"samples [{start},{end}) of {n}"
+        f"FNN bench  base=0x{base_addr:x}  clk={args.clk_mhz:g} MHz  samples [{start},{end}) of {n}"
     )
 
     fails = 0
@@ -128,9 +126,7 @@ def main() -> int:
                 if first_fail is None:
                     first_fail = (s, pred, exp[s], cycles)
                 if fails <= 20 or fails % 100 == 0:
-                    print(
-                        f"sample {s}: FAIL pred={pred} expected={exp[s]} cycles={cycles}"
-                    )
+                    print(f"sample {s}: FAIL pred={pred} expected={exp[s]} cycles={cycles}")
             if args.report_every and (s + 1 - start) % args.report_every == 0:
                 done = s + 1 - start
                 dt = time.perf_counter() - t0
