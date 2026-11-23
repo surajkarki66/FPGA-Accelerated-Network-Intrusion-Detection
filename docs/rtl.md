@@ -88,36 +88,6 @@ Note: If both addresses point to the same location, the RTL code reads the old v
 
 - The layer controller coordinates the entire neural-network inference process.
 - It acts as the brain of your FPGA accelerator: it decides which activation and weight to read, when to perform MAC operations, when to add biases, when to apply ReLU, and where to store the results.
-
-```mermaid
-flowchart TD
-    A["Input Features"] --> B["Activation Memory<br/>(A / B)"]
-    B --> C["Layer Controller"]
-
-    C --> D["Weight Memory"]
-    C --> E["Bias Memory"]
-
-    D --> F["Shared MAC Engine<br/>(NUM_PE lanes)"]
-    E --> F
-
-    F --> G["ReLU (if needed)"]
-    G --> H["Activation Memory<br/>(A / B)"]
-
-    H --> I["Next FC Layer"]
-    I --> J["Final Scores"]
-    J --> K["Argmax"]
-    K --> L["Predicted Class"]
-
-    classDef memory fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef compute fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef control fill:#fef3c7,stroke:#d97706,color:#78350f
-    classDef output fill:#f3e8ff,stroke:#9333ea,color:#581c87
-
-    class B,D,E,H memory
-    class F,G compute
-    class C control
-    class J,K,L output
-```
 - The controller uses a Finite State Machine (FSM) to coordinate the inference process.
 - Activation, weight, and bias memories use synchronous reads. Therefore, the controller separates each memory operation into three stages: REQ (drive addr) → WAIT (mem samples) → CAP(use dout)
 
@@ -191,53 +161,95 @@ A read transaction uses two channels:
 - AR: Read Address.
 - R: Read Data.
 The sequence is simpler:
-ARM Processor                 AXI Slave
-     |                            |
-     |------ ARADDR ------------->|
-     |------ ARVALID ------------>|
-     |                            |
-     |<----- ARREADY --------------|
-     |                            |
-     |<----- RDATA ----------------|
-     |<----- RVALID ---------------|
-     |                            |
-     |------ RREADY -------------->|
-     |                            |
+````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'actorBkg': '#1e293b', 'actorTextColor': '#f8fafc', 'actorBorder': '#38bdf8', 'signalColor': '#334155', 'signalTextColor': '#0f172a', 'labelBoxBkgColor': '#f1f5f9', 'labelBoxBorderColor': '#cbd5e1', 'labelTextColor': '#0f172a', 'noteBkgColor': '#e0f2fe', 'noteTextColor': '#0c4a6e', 'noteBorderColor': '#38bdf8'}}}%%
+sequenceDiagram
+    autonumber
+    participant ARM as ARM Processor<br/>(AXI Master)
+    participant AXI as AXI Slave<br/>(FNN Accelerator)
 
+    rect rgb(241, 245, 249)
+        Note over ARM, AXI: Read Address Channel (AR)
+        ARM->>+AXI: ARADDR (Read Address)
+        ARM->>AXI: ARVALID (Address Valid)
+        AXI-->>-ARM: ARREADY (Address Ready)
+    end
+
+    rect rgb(240, 253, 244)
+        Note over ARM, AXI: Read Data Channel (R)
+        AXI-->>+ARM: RDATA (Read Data)
+        AXI-->>ARM: RVALID (Data Valid)
+        ARM->>-AXI: RREADY (Data Ready)
+    end
+````
 - The processor requests an address, and the slave returns the corresponding register value.
 
-                 SOFTWARE
-             C / Python Application
-                      |
-                      v
-              Zynq ARM Processor
-                      |
-                      | AXI4-Lite
-                      v
-              +----------------+
-              | axi4lite_slave |
-              +----------------+
-                      |
-          +-----------+------------+
-          |           |            |
-          v           v            v
-       fnn_start   Feature       Read Results
-                   Write
-          |           |            ^
-          v           v            |
-              +----------------+
-              |    fnn_top     |
-              |                |
-              | Activation RAM |
-              | Layer Control  |
-              | Shared MAC     |
-              | ReLU / Argmax  |
-              +----------------+
-                      |
-                      v
-               Prediction
-               Output Scores
-               Cycle Count
+````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
+flowchart TB
+    subgraph PS["Processing System (PS)"]
+        direction TB
+        App["<b>Application</b>"]
+        ARM["<b>Zynq ARM Processor</b><br/><i>Memory-Mapped I/O Driver</i>"]
+        
+        App --> ARM
+    end
+
+    subgraph PL["Programmable Logic (PL)"]
+        direction TB
+        AXI{{"<b>axi4lite_slave</b><br/><i>Register File & Bus Interface</i>"}}
+
+        subgraph Signals["Control & Data Registers"]
+            direction LR
+            Start(["<b>Start</b><br/><i>Trigger Pulse</i>"])
+            Feat[/"<b>Feature Write</b><br/><i>INT8 Inputs</i>"/]
+            Read(["<b>Read Results</b><br/><i>Status & Output Regs</i>"])
+        end
+
+        subgraph Top["<b>fnn_top</b> <i>(Accelerator Core)</i>"]
+            direction LR
+            ActRAM[("<b>Activation RAM</b><br/><i>Ping-Pong Buffer</i>")]
+            Ctrl["<b>Layer Control</b><br/><i>FSM & Scheduling</i>"]
+            MAC["<b>Shared MAC</b><br/><i>Parallel PEs</i>"]
+            Post["<b>ReLU / Argmax</b><br/><i>Post-Processing</i>"]
+        end
+
+        Out[/"<b>Hardware Outputs</b>"/]
+
+        %% Internal PL Connections
+        AXI --> Start
+        AXI --> Feat
+        Read --> AXI
+
+        Start --> Top
+        Feat --> Top
+        Top --> Read
+        Top --> Out
+    end
+
+    %% PS to PL Bus
+    ARM == "AXI4-Lite Bus" ==> AXI
+
+    %% Styling
+    classDef sw fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef bus fill:#334155,stroke:#cbd5e1,stroke-width:2px,color:#ffffff;
+    classDef reg fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    classDef core fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef output fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#ffffff;
+
+    class App,ARM sw;
+    class AXI bus;
+    class Start,Feat,Read reg;
+    class ActRAM,Ctrl,MAC,Post core;
+    class Out output;
+
+    style PS fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style PL fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a
+    style Signals fill:#eef2ff,stroke:#c7d2fe,stroke-width:1px,color:#1e1b4b
+    style Top fill:#ecfdf5,stroke:#6ee7b7,stroke-width:2px,color:#064e3b
+````
+
+
 
 #### 2.2.2 fpga_top.v
 - It is the top-level integration module of the FPGA-based neural network accelerator.
@@ -245,25 +257,45 @@ ARM Processor                 AXI Slave
 - It connects the different modules and exposes the signals that communicate with external hardware.
 - Think of it as the main circuit board that connects all the components.
 
-                  FPGA TOP MODULE
-                   (fpga_top)
-                       |
-          +------------+------------+
-          |                         |
-          v                         v
-       fnn_top                 axi4lite_slave
-          |                         |
-          v                         |
-    Neural Network                  |
-     Accelerator                    |
-          |                         |
-          +-----------+-------------+
-                      |
-                 AXI4-Lite
-                      |
-                      v
-              Zynq Processing System
-                  (ARM CPU)
+````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
+flowchart TB
+    subgraph PL["Programmable Logic (PL)"]
+        direction TB
+        
+        subgraph Top["<b>FPGA Top Module</b> (<code>fpga_top</code>)"]
+            direction TB
+            
+            subgraph Core["Compute Core"]
+                direction TB
+                FNN["<b>fnn_top</b><br/><i>Top-Level Wrapper</i>"]
+                Accel{{"<b>Neural Network Accelerator</b><br/><i>FNN Inference Datapath</i>"}}
+                FNN --> Accel
+            end
+
+            AXI[["<b>axi4lite_slave</b><br/><i>AXI4-Lite Bus & Register Interface</i>"]]
+        end
+    end
+
+    PS(["<b>Processing System</b><br/><i>ARM CPU</i>"])
+
+    %% Connections
+    Accel <--> AXI
+    AXI <== "AXI4-Lite Bus" ==> PS
+
+    %% Styling
+    classDef fnn fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef axi fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    classDef ps fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+
+    class FNN,Accel fnn;
+    class AXI axi;
+    class PS ps;
+
+    style PL fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a
+    style Top fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#0f172a
+    style Core fill:#ecfdf5,stroke:#6ee7b7,stroke-width:1px,color:#064e3b
+````
 
 
 ### 2.3 Generated parameters (`include/fnn_params.vh`)
