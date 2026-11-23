@@ -1,43 +1,66 @@
 # System Architecture
 
-This document describes the end-to-end architecture of an FPGA-accelerated multi-layer perceptron (MLP) for binary (and optionally multi-class) network intrusion detection. Floating-point training and evaluation are performed in software on the [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) corpus. The trained model is quantized to signed **INT8 Q1.7** fixed-point arithmetic and exported into synthesisable memory initialisation files. The same numerical contract is then executed by a shared multiply–accumulate (MAC) accelerator implemented in synthesisable Verilog.
+This describes the end-to-end architecture of an FPGA-accelerated multi-layer perceptron (MLP) for network intrusion detection. Floating-point training and evaluation are performed in software on the [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) dataset. The trained model is quantized to signed **INT8 Q1.7** fixed-point arithmetic and exported into synthesisable memory initialisation files. The exported model is then executed by an FPGA accelerator implemented in synthesisable Verilog.
 
 The hardware path is limited to **inference**.
 
 Related documents (see also [`README.md`](README.md) in this folder):
 
-| Document                                  | Content                                          |
-| ----------------------------------------- | ------------------------------------------------ |
-| [`software.md`](software.md)             | Training, quantisation, and export (`sw/`)     |
-| [`rtl.md`](rtl.md)                       | Verilog module map and reading order             |
-| [`simulation.md`](simulation.md)         | Icarus verification and golden-vector contract   |
-| [`host.md`](host.md)                     | AXI4-Lite register map (`board/fnn_bench.py`)  |
-| [`synthesis.md`](synthesis.md)           | Vendor tool and resource guidance                |
-| [`zcu104_bringup.md`](zcu104_bringup.md) | Zynq UltraScale+ ZCU104 implementation procedure |
-| [`dataset.md`](dataset.md)               | UNSW-NB15 acquisition and layout                 |
-
 ## 1. System overview
 
 ````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
 flowchart LR
-  subgraph SW["Software"]
-    D[UNSW-NB15] --> T[train]
-    T --> E[eval]
-    T --> Q[deploy: quantize]
-    Q --> MEM[".mem + fnn_params.vh"]
-  end
+    subgraph Offline["Offline Training & Quantization"]
+        direction LR
+        CSV[("<b>UNSW-NB15 Dataset</b><br/><i>(CSV)</i>")]
+        Train["<b>Model Training</b><br/><i>Feed-Forward Neural Network</i>"]
+        Deploy["<b>Deployment</b><br/><i>Quantization & Export</i>"]
+        
+        CSV --> Train --> Deploy
+    end
 
-  subgraph HW["Hardware"]
-    MEM --> ROM[weight / bias ROM]
-    F[INT8 features] --> ACT[act_mem A/B]
-    ACT --> PE[shared MAC PEs]
-    ROM --> PE
-    PE --> OUT[ReLU / threshold]
-    OUT --> P[pred]
-  end
+    ROM[["<b>Configuration & Parameters</b><br/>(<code>.mem</code> Weights + <code>params.vh</code>)"]]
+
+    subgraph Host["Host (CPU)"]
+        direction LR
+        User(["<b>User Input</b><br/><i>Raw Network Traffic Data</i>"])
+        Feat[/"<b>Pre-processing</b><br/><i>INT8 Feature Vectors</i>"/]
+        
+        User --> Feat
+    end
+
+    subgraph Hardware["FPGA"]
+        direction LR
+        FPGA{{"<b>FPGA Inference Engine</b><br/>"}}
+    end
+
+    Pred(["<b>Output</b><br/><i>Attack / Not Attack</i>"])
+
+    Deploy --> ROM
+    ROM --> FPGA
+    Feat --> FPGA
+    FPGA --> Pred
+
+    %% Styling
+    classDef dataset fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef user fill:#475569,stroke:#94a3b8,stroke-width:2px,color:#ffffff;
+    classDef process fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef artifact fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    classDef fpga fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef output fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#ffffff;
+
+    class CSV dataset;
+    class User user;
+    class Train,Deploy,Feat process;
+    class ROM artifact;
+    class FPGA fpga;
+    class Pred output;
+
+    style Offline fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style Host fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style Hardware fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
 ````
-
-Software produces (i) a floating-point checkpoint, (ii) an INT8 reference forward pass, and (iii) ROM images consumed by the FPGA. Hardware accepts a vector of quantized features, evaluates the MLP layer by layer on a bank of time-multiplexed processing elements (PEs), and returns a class identifier together with an optional cycle count.
 
 `Note`: Time multiplexed means a small set of MAC units is reused in turns (tile by tile, layer by layer) instead of building one dedicated unit per neuron, trading extra cycles for less hardware.
 
@@ -47,13 +70,9 @@ Software produces (i) a floating-point checkpoint, (ii) an INT8 reference forwar
 
 The default binary classifier has the following structure:
 
-````text
-10 features → Dense(6, ReLU) → Dense(1) → score ≥ 0 → attack
-````
+<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/c0eb4e03-8f70-41f6-a375-340088e1ea2c" />
 
-A non-negative final score is interpreted as the attack class (`pred = 1`), a negative score is interpreted as benign (`pred = 0`). This threshold is aligned with the software INT8 reference in `sw/model/quantize.py` (`sw_int_forward`).
-
-### 2.2 Configurable layer schedules
+### 2.2 Configurable layer
 
 Layer widths are selected at training time via `--layers` and must be re-exported with `make deploy` after any change.
 
