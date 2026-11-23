@@ -19,14 +19,6 @@ The software stack trains a floating-point MLP, evaluates it, quantizes weights 
 
 ## 2. Pipeline stages
 
-```mermaid
-flowchart LR
-  train --> eval
-  train --> deploy
-  deploy --> golden
-  golden --> sim
-```
-
 | Stage  | Command         | Outputs                                                    |
 | ------ | --------------- | ---------------------------------------------------------- |
 | Train  | `make train`  | `artifacts/nids_mlp.pt`                                  |
