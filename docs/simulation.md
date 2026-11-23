@@ -127,6 +127,6 @@ The simulation **fails** if any sample disagrees with the software INT8 predicti
 | `tb_mac_unit` PASS     | Single-lane Q1.7 MAC contract holds for the hand-crafted case                      |
 | `tb_fnn_top` PASS      | Accelerator + ROMs are bit-accurate w.r.t. `sw_int_forward` on all golden inputs   |
 | `tb_fnn_top` FAIL      | Scheduling, memory init, parameter mismatch, or arithmetic divergence              |
-| High label accuracy    | Desirable for the intrusion-detection application, but orthogonal to RTL correctness |
+| High label accuracy    | Desirable for the intrusion-detection application                                  |
 
 After a topology or quantization change, always re-run `make deploy`, `make golden`, and `make sim` before synthesising a bitstream that embeds the new ROMs.
