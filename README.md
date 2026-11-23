@@ -9,6 +9,8 @@ The default network topology is:
 
 Deeper or multi-class models are supported by retraining and re-exporting parameters.
 
+The end-to-end flow is given below:
+
 `````mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
 flowchart LR
