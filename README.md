@@ -1,37 +1,90 @@
 # FPGA-Accelerated Network Intrusion Detection
 
-This repository provides an end-to-end flow for **FPGA-accelerated network intrusion detection**. A compact multi-layer perceptron (MLP) is trained in floating point on the [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) corpus, then quantised to signed **INT8 Q1.7** fixed-point arithmetic so that the same numerical model can be executed in programmable logic. Recursive feature elimination reduces each flow record to a small feature vector; the accelerator evaluates the network with shared multiply–accumulate processing elements and returns a class decision. Host software programs the design over **AXI4-Lite**, targeting AMD Zynq UltraScale+ platforms such as the **ZCU104**. The default topology is **10 → 6 → 1** (binary: score ≥ 0 ⇒ attack). Deeper or multi-class schedules are supported by retraining and re-exporting parameters.
+This is an implementation of an FPGA-accelerated network intrusion detection using a neural network. A compact multi-layer perceptron (MLP) is trained in floating point on the [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) dataset, then quantized to signed **INT8 Q1.7** fixed-point arithmetic so that the model can be executed in programmable logic (PL). The accelerator executes the network with shared multiply–accumulate processing elements and returns a class prediction. 
+Host-side software communicates with the accelerator through the **AXI4-Lite** interface, with the AMD Zynq UltraScale+ **ZCU104** serving as the target platform.
+
+The default network topology is:
+
+<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/c0eb4e03-8f70-41f6-a375-340088e1ea2c" />
+
+Deeper or multi-class models are supported by retraining and re-exporting parameters.
 
 `````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
 flowchart LR
-  CSV[UNSW-NB15] --> Train[train / eval]
-  Train --> Deploy[deploy INT8]
-  Deploy --> ROM[".mem + params.vh"]
-  ROM --> FPGA[FPGA FNN + PEs]
-  Feat[INT8 features] --> FPGA
-  FPGA --> Pred[pred]
+    subgraph Offline["Offline Training & Quantization"]
+        direction LR
+        CSV[("<b>UNSW-NB15 Dataset</b><br/><i>(CSV)</i>")]
+        Train["<b>Model Training</b><br/><i>Feed-Forward Neural Network</i>"]
+        Deploy["<b>Deployment</b><br/><i>Quantization & Export</i>"]
+        
+        CSV --> Train --> Deploy
+    end
+
+    ROM[["<b>Configuration & Parameters</b><br/>(<code>.mem</code> Weights + <code>params.vh</code>)"]]
+
+    subgraph Host["Host (CPU)"]
+        direction LR
+        User(["<b>User Input</b><br/><i>Raw Network Traffic Data</i>"])
+        Feat[/"<b>Pre-processing</b><br/><i>INT8 Feature Vectors</i>"/]
+        
+        User --> Feat
+    end
+
+    subgraph Hardware["FPGA"]
+        direction LR
+        FPGA{{"<b>FPGA Inference Engine</b><br/>"}}
+    end
+
+    Pred(["<b>Output</b><br/><i>Attack / Not Attack</i>"])
+
+    Deploy --> ROM
+    ROM --> FPGA
+    Feat --> FPGA
+    FPGA --> Pred
+
+    %% Styling
+    classDef dataset fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef user fill:#475569,stroke:#94a3b8,stroke-width:2px,color:#ffffff;
+    classDef process fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef artifact fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    classDef fpga fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef output fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#ffffff;
+
+    class CSV dataset;
+    class User user;
+    class Train,Deploy,Feat process;
+    class ROM artifact;
+    class FPGA fpga;
+    class Pred output;
+
+    style Offline fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style Host fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style Hardware fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
 `````
 
 ## Documentation
 
-For setup and detailed explanation:
+For setting up and detailed explanation about the project:
 
 | Document                                 | Topic                                              |
 | ---------------------------------------- | -------------------------------------------------- |
 | [Architecture](docs/architecture.md)      | System design, quantization, datapath              |
-| [Software](docs/software.md)              | Train / eval / deploy / export                     |
+| [Software](docs/software.md)              | Training / evaluation / deployment                 |
 | [RTL](docs/rtl.md)                        | Verilog modules                                    |
-| [Simulation](docs/simulation.md)          | Icarus benches and golden vectors                  |
+| [Simulation](docs/simulation.md)          | Icarus and golden vectors                  |
 | [Host interface](docs/host.md)            | AXI4-Lite register map                             |
 | [Synthesis](docs/synthesis.md)            | Vendor tools and resource knobs                    |
 | [ZCU104 bring-up](docs/zcu104_bringup.md) | Automation scripts                                 |
 
 
-## License and dataset
+## License
 
-See [LICENSE](LICENSE). Dataset terms: [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset)
+See [LICENSE](LICENSE). 
 
-Design ideas consulted from:
-[verilog_MNIST_accelerator](https://github.com/loonamanik/verilog_MNIST_accelerator),
-[ZFTurbo digit detector](https://github.com/ZFTurbo/Verilog-Generator-of-Neural-Net-Digit-Detector-for-FPGA),
-[cnn-fpga](https://github.com/mjao1/cnn-fpga).
+## Dataset
+Dataset: [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset)
+
+**Reference**
+1. [verilog_MNIST_accelerator](https://github.com/loonamanik/verilog_MNIST_accelerator),
+2. [ZFTurbo digit detector](https://github.com/ZFTurbo/Verilog-Generator-of-Neural-Net-Digit-Detector-for-FPGA),
