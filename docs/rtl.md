@@ -65,8 +65,6 @@ Note: If both addresses point to the same location, the RTL code reads the old v
 - It instantiates multiple mac_unit modules operating in parallel. All MAC units receive the same activation input (a), but each lane receives its own weight and bias values. This allows the accelerator to calculate multiple output neurons simultaneously.
 - For example, if NUM_PE = 4, four MAC units can process four different output neurons in parallel using the same input activation and four different weights.
 
-![1793873965575](image/rtl/1793873965575.png)
-
 #### 2.1.5 mac_unit.v
 
 - The mac_unit is the module that performs the actual multiply-accumulate (MAC) operation for one processing element (PE).
