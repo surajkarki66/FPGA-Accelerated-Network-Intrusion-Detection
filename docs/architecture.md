@@ -102,14 +102,43 @@ CSV locations and download instructions are given in [`dataset.md`](dataset.md).
 ## 4. Software pipeline
 
 ````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
 flowchart LR
-  train --> eval
-  train --> deploy
-  deploy --> golden
-  golden --> sim
+    subgraph Software["Software Model & Evaluation"]
+        direction LR
+        train["<b>Model Training</b><br/><i>Weights & Biases</i>"]
+        eval(["<b>Model Evaluation</b><br/><i>Accuracy</i>"])
+        
+        train --> eval
+    end
+
+    subgraph Verification["Hardware Verification & Co-Simulation"]
+        direction LR
+        deploy["<b>Deployment & Export</b><br/><i>Quantization & Parameter Generation</i>"]
+        golden[["<b>Golden Reference</b><br/><i>Bit-Accurate Expected Outputs</i>"]]
+        sim{{"<b>RTL Simulation</b><br/><i>Hardware vs. Golden Verification</i>"}}
+        
+        deploy --> golden --> sim
+    end
+
+    train --> deploy
+
+    %% Styling
+    classDef process fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef eval fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef artifact fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    classDef sim fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+
+    class train,deploy process;
+    class eval eval;
+    class golden artifact;
+    class sim sim;
+
+    style Software fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style Verification fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
 ````
 
-| Stage                     | Command         | Primary artefacts                              |
+| Stage                     | Command         | Primary ouputs                              |
 | ------------------------- | --------------- | ---------------------------------------------- |
 | Floating-point training   | `make train`  | `artifacts/nids_mlp.pt`                      |
 | Floating-point evaluation | `make eval`   | Test-set accuracy (console)                    |
@@ -117,18 +146,56 @@ flowchart LR
 | Golden-vector generation  | `make golden` | `sim/golden/` (UNSW test set, INT8)          |
 | RTL simulation            | `make sim`    | Icarus pass/fail vs software INT8              |
 
-Quantisation converts each dense layer's weights and biases to signed INT8 and validates that the software INT8 forward pass remains consistent with the intended decision rule. The golden generator then evaluates that same INT8 model on every test sample (or a configured subset) and writes features, expected predictions, and ground-truth labels for hardware comparison.
+Quantisation converts each dense layer's weights and biases to signed INT8 and validates that the software INT8 forward pass remains consistent with the intended decision rule. The golden reference generator then evaluates that same INT8 model on every test sample and writes features, expected predictions, and ground-truth labels for hardware comparison.
 
 ## 5. Fixed-point arithmetic (Q1.7)
 
 Unless otherwise noted, activations, weights, and biases are **signed 8-bit** values with seven fractional bits (Q1.7). Products therefore lie in a Q2.14
-domain and are accumulated in a wider signed register (`FNN_ACC_W`, typically 32 bits). The PE finalisation sequence is:
+domain and are accumulated in a wider signed register (32 bits).
 
-1. $\mathrm{acc} \leftarrow \mathrm{acc} + a \cdot w$ for each input index;
-2. $\mathrm{acc} \leftarrow \mathrm{acc} + (b \ll 7)$ to align the bias;
-3. $y \leftarrow \mathrm{sat}_{[-128,127]}(\mathrm{acc} \gg 7)$.
+````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
+flowchart LR
+    subgraph Inputs["Signed 8-bit Inputs (Q1.7)"]
+        direction TB
+        Act[/"<b>Activation (a)</b><br/><i>INT8 [Q1.7]</i>"/]
+        Wgt[/"<b>Weight (w)</b><br/><i>INT8 [Q1.7]</i>"/]
+        Bias[/"<b>Bias (b)</b><br/><i>INT8 [Q1.7]</i>"/]
+    end
 
-Hidden layers apply a ReLU nonlinearity after saturation. The output layer does not. Binary decisions use $y \ge 0$; multi-class decisions use argmax over the output vector.
+    subgraph MAC["MAC"]
+        direction LR
+        Mult(("<b>Multiplier</b><br/><i>a × w → Q2.14</i>"))
+        AccReg[("<b>Accumulator Register</b><br/><i>(32-bit Signed)<br/>acc←acc+(a·w)</i>")]
+        BiasShift["<b>Bias Alignment</b><br/><i>b ≪ 7 <br/>[Q1.7 → Q2.14]</i>"]
+        BiasAdd(("<b>Bias Adder</b><br/><i>acc←acc+(b≪7)</i>"))
+        Scale["<b>Scale</b><br/><i>acc ≫ 7<br/>[Q2.14 → Q1.7]</i>"]
+        Clamp["<b>Clamp</b><br/><i>y←clamp<sub>[-128,127]</sub></i>"]
+
+        Mult --> AccReg
+        AccReg -- "Loop over<br/>input index" --> AccReg
+        BiasShift --> BiasAdd
+        AccReg --> BiasAdd
+        BiasAdd --> Scale
+        Scale --> Clamp
+    end
+
+    Act --> Mult
+    Wgt --> Mult
+    Bias --> BiasShift
+
+    %% Styling
+    classDef input fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef op fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef reg fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+
+    class Act,Wgt,Bias input;
+    class Mult,BiasShift,BiasAdd,Scale,Clamp op;
+    class AccReg reg;
+
+    style Inputs fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    style MAC fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+````
 
 ## 6. Hardware organization
 
@@ -140,7 +207,6 @@ Hidden layers apply a ReLU nonlinearity after saturation. The output layer does 
 | `rtl/peripheral/` | `fpga_top`, `axi4lite_slave`                                                                                          | Board-facing AXI4-Lite wrapper               |
 | `rtl/include/`    | `fnn_params.vh`                                                                                                         | Auto-generated geometry and register offsets |
 
-`fpga_top` instantiates `fnn_top` and `axi4lite_slave`. Simulation benches instantiate `fnn_top` (or `mac_unit`) directly and do **not** exercise the AXI slave; on-board bring-up uses the peripheral path described in [`zcu104_bringup.md`](zcu104_bringup.md).
 
 ### 6.2 Accelerator datapath
 
