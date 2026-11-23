@@ -107,7 +107,7 @@ For each golden sample $s = 0, \ldots, N-1$:
 5. Optionally tally agreement with `labels[s]` (**accuracy diagnostic**).
 6. Accumulate cycle-count statistics from `cycle_count`.
 
-Waveform dumping is deliberately omitted for full-corpus runs because the resulting VCD would be impractically large. A long wall-clock timeout guards against deadlock.
+Waveform dumping is deliberately omitted for full test-set runs because the resulting VCD would be impractically large. A long wall-clock timeout guards against deadlock.
 
 ### 5.3 Reported metrics
 
