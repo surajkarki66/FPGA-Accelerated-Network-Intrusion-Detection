@@ -208,31 +208,55 @@ flowchart LR
 | `rtl/include/`    | `fnn_params.vh`                                                                                                         | Auto-generated geometry and register offsets |
 
 
-### 6.2 Accelerator datapath
+### 6.2 Accelerator Architecture
 
 ````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
 flowchart TB
-  HOST[Host / AXI] -->|INT8 features| ACT
+ HOST[/"<b>Host</b><br/><i>INT8 Input Features</i>"/]
+ subgraph ACCEL["<b>fnn_top</b> <i>(FPGA Inference Engine)</i>"]
+ direction TB
+ subgraph MEM["Ping-Pong Activation Buffer"]
+ direction LR
+ ACTA["<b>Memory A</b>"]
+ ACTB["<b>Memory B</b>"]
+ end
+ CTRL{{"<b>Layer Controller</b><br/><i>FSM, ReLU & Decision</i>"}}
+ subgraph ROMS["ROMs"]
+ direction LR
+ W[("<b>INT8 Weight ROM</b>")]
+ B[("<b>INT8 Bias ROM</b>")]
+ end
+ ENG["<b>Shared MAC Engine</b><br/><i>Parallel MAC Lanes</i>"]
 
-  subgraph ACCEL["fnn_top"]
-    ACT["act_mem\n(A/B ping-pong)"]
-    CTRL[layer_controller]
-    ENG["shared_mac_engine\n(NUM_PE MAC lanes)"]
-    W[(weights.mem)]
-    B[(biases.mem)]
+ CTRL <--> ACTA
+ CTRL <--> ACTB
+ CTRL -. "addr" .-> ROMS
+ ROMS -- "weights / biases" --> CTRL
+ CTRL -- "a, w, b, control" --> ENG
+ ENG -- "quantized outputs (y)" --> CTRL
+ end
+ PRED(["<b>Prediction Output</b>"])
 
-    CTRL -->|addr / ctrl| ACT
-    CTRL -->|a, clear, valid, finalize| ENG
-    W --> ENG
-    B --> ENG
-    ENG -->|y| CTRL
-    ACT -->|activation a| ENG
-  end
+ HOST -- "AXI4 Lite" --> CTRL
+ CTRL -- "final decision" --> PRED
 
-  CTRL -->|score ≥ 0 or argmax| PRED[pred]
+ classDef host fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+ classDef ctrl fill:#334155,stroke:#cbd5e1,stroke-width:2px,color:#ffffff;
+ classDef ram fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+ classDef rom fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+ classDef engine fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+ classDef output fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#ffffff;
+ class HOST host;
+ class CTRL ctrl;
+ class ACTA,ACTB ram;
+ class W,B rom;
+ class ENG engine;
+ class PRED output;
+ style ACCEL fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a
+ style MEM fill:#eef2ff,stroke:#c7d2fe,stroke-width:1px,color:#1e1b4b
+ style ROMS fill:#f0f9ff,stroke:#bae6fd,stroke-width:1px,color:#0c4a6e
 ````
-
-Two activation memories (**A** and **B**) implement a ping-pong buffer: layer $n$ reads from one bank while writing layer $n$ outputs into the other. Weight and bias memories are read-only ROMs initialised from the exported `.mem` files. The `layer_controller` issues addresses, PE enables, and handshake signals and the `shared_mac_engine` broadcasts a single activation sample to `FNN_NUM_PE` MAC lanes, each with a distinct weight (and, at bias time, a distinct bias).
 
 ### 6.3 Processing-element tiling
 
@@ -250,10 +274,116 @@ Within a tile, for every input index $i$:
 
 After the input sweep, each enabled lane adds its bias, finalises to INT8, applies ReLU when the layer is hidden, and writes results into the destination activation bank. The controller then advances to the next tile or the next layer.
 
+````mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b', 'secondaryColor': '#0f172a', 'tertiaryColor': '#1e293b'}}}%%
+flowchart LR
+ A[/"<b>Shared Activation</b>"/]
+ W[/"<b>Weights</b>"/]
+ B[/"<b>Biases</b>"/]
+ C[/"<b>clear / valid_in /<br/>bias_add / finalize</b>"/]
+ LE[/"<b>Lane Enable Signal</b>"/]
+
+ subgraph ENG["<b>Shared MAC Engine</b>"]
+ direction TB
+ PE0["<b>MAC Unit 0</b>"]
+ PE1["<b>MAC Unit 1</b>"]
+ PE2["<b>MAC Unit 2</b>"]
+ PE3["<b>MAC Unit 3</b>"]
+ end
+
+ Y[/"<b>Y</b>"/]
+ V[/"<b>Valid Output Signal</b>"/]
+
+ A -- "broadcast" --> PE0 & PE1 & PE2 & PE3
+ W -- "w[7:0]" --> PE0
+ W -- "w[15:8]" --> PE1
+ W -- "w[23:16]" --> PE2
+ W -- "w[31:24]" --> PE3
+ B -- "bias[7:0]" --> PE0
+ B -- "bias[15:8]" --> PE1
+ B -- "bias[23:16]" --> PE2
+ B -- "bias[31:24]" --> PE3
+ C --> PE0 & PE1 & PE2 & PE3
+ LE -- "bit 0" --> PE0
+ LE -- "bit 1" --> PE1
+ LE -- "bit 2" --> PE2
+ LE -- "bit 3" --> PE3
+ PE0 -- "y[7:0]" --> Y
+ PE1 -- "y[15:8]" --> Y
+ PE2 -- "y[23:16]" --> Y
+ PE3 -- "y[31:24]" --> Y
+ PE0 & PE1 & PE2 & PE3 -- "1 bit" --> V
+
+ classDef input fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+ classDef engine fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+ classDef output fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#ffffff;
+ class A,W,B,C,LE input;
+ class PE0,PE1,PE2,PE3 engine;
+ class Y,V output;
+ style ENG fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a
+````
+
 ### 6.4 Controller scheduling (summary)
 
 Synchronous RAM reads require a three-phase access (`REQ` → `WAIT` → `CAP`). Consequently the controller interleaves memory latency with MAC issue. At a high level, one tile proceeds as: clear accumulators; for each input, fetch activation and per-lane weights then pulse `valid`; fetch biases; finalise; capture `y`; write back; advance. Terminal states produce `pred` and assert
 `done`. Detailed state names are defined in `rtl/accel/layer_controller.v`.
+
+The Finite State Machine implemented on layer controller:
+````mermaid
+
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1e293b', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#38bdf8', 'lineColor': '#64748b'}}}%%
+stateDiagram-v2
+    direction TB
+
+    [*] --> S_IDLE : rst_n
+
+    S_IDLE --> S_INIT : start<br/>(busy=1, layer=0, src=A)
+
+    S_INIT --> S_ACT_REQ : eng_clear, set lanes,<br/>in_idx=0
+
+    state "Activation read (per input)" as ACTREAD {
+        direction LR
+        S_ACT_REQ --> S_ACT_WAIT : drive a_raddr / b_raddr
+        S_ACT_WAIT --> S_ACT_CAP : sync RAM latency
+    }
+
+    S_ACT_CAP --> S_W_REQ : act_hold = rdata,<br/>pe_i=0
+
+    state "Weight fetch (per PE)" as WREAD {
+        direction LR
+        S_W_REQ --> S_W_WAIT : drive w_addr
+        S_W_WAIT --> S_W_CAP : ROM latency
+        S_W_CAP --> S_W_REQ : pe_i + 1 < NUM_PE
+    }
+
+    S_W_CAP --> S_MAC : last PE
+
+    S_MAC --> S_ACT_REQ : in_idx + 1 < in_dim<br/>(eng_valid pulse)
+    S_MAC --> S_B_REQ : all inputs done<br/>(pe_i=0)
+
+    state "Bias fetch (per PE)" as BREAD {
+        direction LR
+        S_B_REQ --> S_B_WAIT : drive bias_addr
+        S_B_WAIT --> S_B_CAP : ROM latency
+        S_B_CAP --> S_B_REQ : pe_i + 1 < NUM_PE
+    }
+
+    S_B_CAP --> S_BIAS : last PE
+    S_BIAS --> S_FINAL : eng_bias_add
+    S_FINAL --> S_WAIT_Y : eng_finalize
+    S_WAIT_Y --> S_WAIT_Y : no eng_valid_out
+    S_WAIT_Y --> S_WRITE : any eng_valid_out<br/>(wr_i=0)
+    S_WRITE --> S_WRITE : wr_i + 1 < NUM_PE<br/>(ReLU, write act mem)
+    S_WRITE --> S_ADVANCE : last lane
+
+    S_ADVANCE --> S_INIT : out_base + NUM_PE < out_dim<br/>(next PE batch)
+    S_ADVANCE --> S_INIT : layer + 1 < NUM_FC<br/>(toggle A/B, next layer)
+    S_ADVANCE --> S_DECIDE : final layer done
+
+    S_DECIDE --> S_DONE : pred = sign / argmax
+    S_DONE --> S_IDLE : busy=0, done=1
+````
+
 
 ## 8. Host interface (summary)
 
